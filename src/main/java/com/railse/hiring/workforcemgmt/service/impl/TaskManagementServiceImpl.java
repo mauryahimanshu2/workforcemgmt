@@ -82,33 +82,32 @@ public class TaskManagementServiceImpl implements TaskManagementService {
     @Override
     public String assignByReference(AssignByReferenceRequest request) {
         List<Task> applicableTasks = Task.getTasksByReferenceType(request.getReferenceType());
-        List<TaskManagement> existingTasks = taskRepository.findByReferenceIdAndReferenceType(request.getReferenceId(), request.getReferenceType());
-
+        List<TaskManagement> existingTasks = taskRepository.findByReferenceIdAndReferenceType(
+                request.getReferenceId(),
+                request.getReferenceType()
+        );
 
         for (Task taskType : applicableTasks) {
             List<TaskManagement> tasksOfType = existingTasks.stream()
                     .filter(t -> t.getTask() == taskType && t.getStatus() != TaskStatus.COMPLETED)
-                    .collect(Collectors.toList());
+                    .toList();
 
-
-            // BUG #1 is here. It should assign one and cancel the rest.
-            // Instead, it reassigns ALL of them.
-            if (!tasksOfType.isEmpty()) {
-                for (TaskManagement taskToUpdate : tasksOfType) {
-                    taskToUpdate.setAssigneeId(request.getAssigneeId());
-                    taskRepository.save(taskToUpdate);
-                }
-            } else {
-                // Create a new task if none exist
-                TaskManagement newTask = new TaskManagement();
-                newTask.setReferenceId(request.getReferenceId());
-                newTask.setReferenceType(request.getReferenceType());
-                newTask.setTask(taskType);
-                newTask.setAssigneeId(request.getAssigneeId());
-                newTask.setStatus(TaskStatus.ASSIGNED);
-                taskRepository.save(newTask);
+            // Cancel all existing (non-completed) tasks of this type
+            for (TaskManagement taskToCancel : tasksOfType) {
+                taskToCancel.setStatus(TaskStatus.CANCELLED);
+                taskRepository.save(taskToCancel);
             }
+
+            // Always create a new task for the new assignee
+            TaskManagement newTask = new TaskManagement();
+            newTask.setReferenceId(request.getReferenceId());
+            newTask.setReferenceType(request.getReferenceType());
+            newTask.setTask(taskType);
+            newTask.setAssigneeId(request.getAssigneeId());
+            newTask.setStatus(TaskStatus.ASSIGNED);
+            taskRepository.save(newTask);
         }
+
         return "Tasks assigned successfully for reference " + request.getReferenceId();
     }
 
@@ -117,19 +116,18 @@ public class TaskManagementServiceImpl implements TaskManagementService {
     public List<TaskManagementDto> fetchTasksByDate(TaskFetchByDateRequest request) {
         List<TaskManagement> tasks = taskRepository.findByAssigneeIdIn(request.getAssigneeIds());
 
-
-        // BUG #2 is here. It should filter out CANCELLED tasks but doesn't.
         List<TaskManagement> filteredTasks = tasks.stream()
+                .filter(task -> task.getStatus() != TaskStatus.CANCELLED)
                 .filter(task -> {
-                    // This logic is incomplete for the assignment.
-                    // It should check against startDate and endDate.
-                    // For now, it just returns all tasks for the assignees.
-                    return true;
+                    Long deadline = task.getTaskDeadlineTime();
+                    return deadline != null &&
+                            deadline >= request.getStartDate() &&
+                            deadline <= request.getEndDate();
                 })
                 .collect(Collectors.toList());
 
-
         return taskMapper.modelListToDtoList(filteredTasks);
     }
+
 }
 
